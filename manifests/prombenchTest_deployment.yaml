@@ -1,0 +1,115 @@
+# The following image, (used in this file):
+# https://hub.docker.com/r/prombenchgeekodour/prombench
+# contains the changes from:
+# 1) https://github.com/prometheus/prombench/pull/219
+# 2) https://github.com/prometheus/prombench/pull/220
+# 
+# Instructions:
+# 1) create a new branch off `master`
+# 2) merge changes from #219  and #220 to it
+# 2) build prombench binary with `make build`
+# 3) [optional] apply this diff with `git apply difffilename.diff` : http://dpaste.com/0XHJ42R 
+# 4) copy this file to `/manifests/prombench/prombenchTest_deployment.yaml`
+# 5) run the following manifest files:
+#./prombench gke cluster create -a $AUTH_FILE -v PROJECT_ID:$PROJECT_ID \
+#    -v ZONE:$ZONE -v CLUSTER_NAME:$CLUSTER_NAME -f manifests/cluster.yaml
+#
+# ./prombench gke resource apply -a $AUTH_FILE -v ZONE:$ZONE \
+#    -v CLUSTER_NAME:$CLUSTER_NAME -v PROJECT_ID:$PROJECT_ID \
+#    -v GKE_AUTH="$(cat $AUTH_FILE | base64 -w 0)" \
+#    -f manifests/prow/secrets.yaml
+#
+#./prombench gke resource apply -a $AUTH_FILE -v PROJECT_ID:$PROJECT_ID -v ZONE:$ZONE \
+#    -v CLUSTER_NAME:$CLUSTER_NAME -v DOMAIN_NAME:$DOMAIN_NAME \
+#    -v PR_NUMBER:$PR_NUMBER -v RELEASE:$RELEASE \
+#    -v LAST_COMMIT:$LAST_COMMIT \
+#    -f manifests/prombench/prombenchTest_deployment.yaml
+# 
+# you can check the logs of the statefulSet in the gke dashboard
+# once a full test is running, you can change the value of $LAST_COMMIT and run the 
+# third manifest command again. this will slowly delete all resources, run preStopHook,
+# once the nodepools are deteled. it will rerun the stateful state which willrecreate the nodepools
+# and other resources.
+# 
+# I've set gracePeriod of 15 mins which is more than enough for teardown of the resources of a benchmark test
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: prombench-test-{{ .PR_NUMBER }}
+  labels:
+    app: prombench-test-{{ .PR_NUMBER }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prombench-test-{{ .PR_NUMBER }}
+  template:
+    metadata:
+      labels:
+        app: prombench-test-{{ .PR_NUMBER }}
+        last_commit: '{{ .LAST_COMMIT }}'
+    spec:
+      initContainers:
+      - name: check-no-nodepool-exist
+        image: docker.io/prombenchgeekodour/prombench:2.0.1
+        imagePullPolicy: Always
+        command:
+        - "/bin/sh"
+        - "-c"
+        - "until make nodepool_check; do echo waiting for nodepools to be deleted; sleep 10; done;"
+        volumeMounts:
+        - name: serviceaccount
+          mountPath: /etc/serviceaccount/
+          readOnly: true
+        env:
+          - name: PROJECT_ID
+            value: "{{ .PROJECT_ID }}"
+          - name: ZONE
+            value: "{{ .ZONE }}"
+          - name: CLUSTER_NAME
+            value: "{{ .CLUSTER_NAME }}"
+          - name: RELEASE
+            value: "{{ .RELEASE }}"
+          - name: PR_NUMBER
+            value: "{{ .PR_NUMBER }}"
+      containers:
+      - name: prombench-test-{{ .PR_NUMBER }}
+        image: docker.io/prombenchgeekodour/prombench:2.0.1
+        imagePullPolicy: Always
+        command:
+        - "/bin/sh"
+        - "-c"
+        args:
+        - "make deploy && echo 'deploy succeeded, now sleeping' && sleep infinity"
+        env:
+          - name: PROJECT_ID
+            value: "{{ .PROJECT_ID }}"
+          - name: ZONE
+            value: "{{ .ZONE }}"
+          - name: CLUSTER_NAME
+            value: "{{ .CLUSTER_NAME }}"
+          - name: RELEASE
+            value: "{{ .RELEASE }}"
+          - name: PR_NUMBER
+            value: "{{ .PR_NUMBER }}"
+          - name: DOMAIN_NAME
+            value: "{{ .DOMAIN_NAME }}"
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - "/bin/sh"
+              - "-c"
+              - "make clean"
+        volumeMounts:
+        - name: serviceaccount
+          mountPath: /etc/serviceaccount/
+          readOnly: true
+      volumes:
+        - name: serviceaccount
+          secret:
+            secretName: service-account
+      terminationGracePeriodSeconds: 900 # 15 mins
+      nodeSelector:
+        cloud.google.com/gke-nodepool: prow
