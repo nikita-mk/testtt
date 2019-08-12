@@ -1,4 +1,4 @@
-module github.com/prometheus/prombench
+module github.com/nikita-mk/testtt
 
 go 1.12
 

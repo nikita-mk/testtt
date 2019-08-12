@@ -1,4 +1,4 @@
-module github.com/prometheus/prombench/tools/commentMonitor
+module github.com/nikita-mk/testtt/tools/commentMonitor
 
 go 1.12
 
